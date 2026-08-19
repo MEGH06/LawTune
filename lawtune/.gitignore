@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+data/raw/*
+data/interim/*
+data/processed/*
+outputs/
+!data/raw/.gitkeep
+!data/interim/.gitkeep
+!data/processed/.gitkeep
+kaggle.json
