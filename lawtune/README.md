@@ -137,10 +137,121 @@ If you really want the adapter in the repo, rank 16 at 42 MB will go in without 
 03_build_datasets.py   everything        -> data/processed/{cpt,sft,eval}/
 04_train_cpt.py        stage A, optional -> outputs/cpt_fused/
 05_train_sft.py        stage B           -> outputs/lawtune_adapter/
-06_evaluate.py         the scorecard     -> outputs/eval_report.json
-07_export.py           fused MLX + GGUF  -> outputs/
-chat.py                guarded REPL
+06_evaluate.py         the scorecard      -> outputs/eval_report.json
+07_export.py           fused MLX + GGUF   -> outputs/
+
+--- knowledge graph + retrieval ---
+08_fetch_judgments.py  SC judgments 2020+ -> data/interim/judgments/
+09_build_graph.py      the legal KG       -> data/processed/legal_graph.kuzu
+10_build_index.py      chunks + FAISS     -> data/processed/faiss_index/
+11_ask.py              query / inspect retrieval
+chat.py                guarded REPL (--rag to ground it)
 ```
+
+---
+
+## The knowledge graph
+
+### Where the judgments come from
+
+`s3://indian-supreme-court-judgments` — the AWS Open Data mirror of eCourts. **1950 to
+2025, CC-BY-4.0, anonymous access, refreshed bi-monthly.** No Indian Kanoon scraping, no
+CAPTCHA, no API key, no terms-of-service problem. Metadata per year is ~1 MB; individual
+judgment PDFs are ~200-500 KB each.
+
+```bash
+python scripts/08_fetch_judgments.py --years 2020-2025 --max-per-year 400
+```
+
+Metadata for the whole window is always fetched; text only up to your cap. That split
+matters: **a judgment with no text is still a useful node** — it has a bench, a date, a
+disposal and inbound citations — so the graph degrades gracefully instead of breaking
+when you cap the download.
+
+### Why Kùzu and not Neo4j
+
+Neo4j Community is free, but it is a *server*: a JVM, a service, ports, credentials, and
+a second thing that can break on a laptop. **Kùzu is embedded** — the database is a
+directory, it speaks Cypher, it is MIT-licensed, and it installs with `pip install kuzu`.
+For a graph you ship inside an app, that settles it.
+
+Want the Neo4j browser anyway? `09_build_graph.py --export-neo4j` writes node/edge CSVs
+and a `LOAD CSV` script.
+
+### Schema — built for all of law, not one vertical
+
+Most legal-KG projects pick one area (matrimonial, or consumer, or tax) because a narrow
+ontology is easy. Here the nodes and edges are the ones *every* Indian judgment has, and
+subject matter is a **label** rather than a structure — so one graph covers criminal,
+constitutional, tax, service, IP, environment, arbitration and the rest with no schema
+change per area.
+
+```
+Judgment ─CITES(treatment)→ Judgment      precedent network, with how it was treated
+         ─INTERPRETS→ Provision ─PART_OF→ Act
+         ─DECIDED_BY→ Judge               bench composition, authorship
+         ─ABOUT(score)→ Area              35 areas of law
+         ─INVOKES→ Doctrine               28 named doctrines
+         ─HAS_CHUNK→ Chunk                the join to FAISS
+         ─IN_COURT→ Court
+```
+
+**35 substantive areas** grouped under public / private / regulatory / procedural law, and **72 statutes** in
+`lawtune/acts.py`. A live build over 25 real 2023 judgments touched 25 distinct areas —
+criminal, company, constitutional, GST, education, service, motor accident, land revenue,
+civil procedure, property, direct tax, securities, labour, administrative, evidence,
+arbitration, contract, environmental, cyber, family, election, reservation, narcotics,
+human rights.
+
+### Extraction is rule-based, on purpose
+
+An LLM extraction pass over ~100k judgments costs either money or days of GPU. Regexes
+cost seconds and are *inspectable* — when an edge looks wrong you can see which pattern
+made it. Indian legal citation is highly conventional, so the ceiling is high:
+
+- **Citations** — SCC, AIR, SCR, INSC, SCC OnLine, Supp — normalised so `(1973) 4 SCC 225`
+  and `AIR 1973 SC 1461` resolve to the *same node*.
+- **Treatment** — followed / distinguished / overruled / reversed / affirmed, taken from
+  the verb **nearest** the citation, not from a priority list.
+- **Provisions** — resolved to the Act named nearest the reference, then range-checked
+  against `acts.py`.
+- **Areas and doctrines** — weighted whole-word matching.
+
+**Citations pointing outside the corpus become stub nodes.** Dropping them would throw
+away the precedent signal for everything older than the window — which, for a 2020+
+corpus, is most of Indian law.
+
+### Retrieval: FAISS for recall, graph for reasoning
+
+Plain vector RAG answers "which passages look like the question". For law that is the
+wrong question. What matters is which *authority* governs, whether it is still good law,
+and what else construes the same provision — none of which is recoverable from cosine
+similarity.
+
+1. **dense recall** — FAISS over chunks; multilingual, so a Tamil question retrieves
+   English judgments
+2. **provision hook** — Sections named in the question resolved through the graph
+3. **precedent expansion** — 1-2 hops of `CITES` from the strongest hits
+4. **fusion** — similarity + citation in-degree + recency + provision match
+5. **treatment warnings** — a retrieved case later overruled is *flagged in the context*,
+   because handing over an overruled case unflagged is worse than retrieving nothing: it
+   launders a wrong answer through a real citation
+6. **grounded prompt** — answer only from the context, say so when it does not settle it
+
+```bash
+python scripts/11_ask.py "quashing under Section 482 CrPC" --show-context
+python scripts/11_ask.py "cheque bounce" --retrieval-only   # no model needed
+python scripts/11_ask.py --explore                          # graph statistics
+python scripts/chat.py --rag                                # grounded REPL
+```
+
+`--retrieval-only` is the one to reach for while tuning: it exercises the whole retrieval
+path without loading the model, so you can tell whether a bad answer is a retrieval
+problem or a generation problem.
+
+Embeddings default to `intfloat/multilingual-e5-small` (118M, 384-dim, 100 languages,
+runs on MPS). `--model BAAI/bge-m3` is better and much heavier. Everything is local and
+free: no embedding API, no vector-DB service — FAISS is a file next to the graph.
 
 ---
 
@@ -302,8 +413,15 @@ lawtune/
 │   ├── law_data.py     key-tolerant Kaggle JSON loader
 │   ├── guard_data.py   synthetic abstention/refusal corpus
 │   ├── guardrails.py   runtime input + output validation
-│   └── textutil.py     script detection, dedupe, junk filter
-├── scripts/            00 … 07 + chat.py
+│   ├── acts.py         72 Indian statutes; shared by guardrails and the graph
+│   ├── textutil.py     script detection, dedupe, junk filter
+│   └── kg/
+│       ├── schema.py   graph schema + 35-area taxonomy + 28 doctrines
+│       ├── extract.py  citations, provisions, areas, doctrines, bench
+│       ├── graph.py    Kùzu build + traversals + Neo4j export
+│       ├── index.py    chunking, embeddings, FAISS
+│       └── retrieve.py GraphRAG fusion and prompt assembly
+├── scripts/            00 … 11 + chat.py
 └── run_all.sh
 ```
 
@@ -322,3 +440,10 @@ lawtune/
 | `--seq-len` | 04/05 | drop to 512 on an 8 GB Mac |
 | `--train-embeddings` | 04 | better unseen scripts, may block fusing |
 | `--no-cpt` | 05 | train straight from the stock base |
+| `--years` | 08 | judgment window, e.g. `2020-2025` |
+| `--max-per-year` | 08 | cap on PDFs downloaded per year |
+| `--metadata-only` | 08 | build the graph with no PDF downloads |
+| `--export-neo4j` | 09 | also emit Neo4j CSVs |
+| `--model` | 10 | embedding model (`BAAI/bge-m3` for quality) |
+| `--retrieval-only` | 11 | inspect retrieval without loading the model |
+| `--rag` | chat | ground every answer in retrieved judgments |

@@ -24,3 +24,12 @@ sacremoses
 
 # data ingest
 kaggle
+
+# --- knowledge graph + retrieval (steps 08-11) ---
+# kuzu: embedded property graph, Cypher, MIT. No server, no JVM, no Docker -- the
+#       database is a directory. Neo4j Community is also free but is a service to run;
+#       09_build_graph.py --export-neo4j emits CSVs if you want the Neo4j browser.
+kuzu>=0.6.0
+faiss-cpu>=1.8.0
+sentence-transformers>=3.0.0
+pypdf>=4.2.0

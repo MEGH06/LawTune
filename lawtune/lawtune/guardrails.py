@@ -16,50 +16,15 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Tuple
+from typing import List, Optional, Tuple
 
+from .acts import LIMITS, identify_act
 from .textutil import dominant_script
 
 # ------------------------------------------------------------------ statute bounds
-# (highest section/article number, human name). Sub-lettered provisions like 498A or
-# 21A are handled separately -- only the numeric part is range-checked.
-STATUTE_LIMITS: Dict[str, Tuple[int, str]] = {
-    "ipc":         (511, "Indian Penal Code, 1860"),
-    "crpc":        (484, "Code of Criminal Procedure, 1973"),
-    "constitution": (395, "Constitution of India"),
-    "evidence":    (167, "Indian Evidence Act, 1872"),
-    "cpc":         (158, "Code of Civil Procedure, 1908"),
-    "bns":         (358, "Bharatiya Nyaya Sanhita, 2023"),
-    "bnss":        (531, "Bharatiya Nagarik Suraksha Sanhita, 2023"),
-    "bsa":         (170, "Bharatiya Sakshya Adhiniyam, 2023"),
-    "it_act":      (90, "Information Technology Act, 2000"),
-    "hma":         (30, "Hindu Marriage Act, 1955"),
-    "ida":         (40, "Industrial Disputes Act, 1947"),
-    "contract":    (238, "Indian Contract Act, 1872"),
-    "ni_act":      (147, "Negotiable Instruments Act, 1881"),
-    "cpa":         (107, "Consumer Protection Act, 2019"),
-    "pocso":       (46, "POCSO Act, 2012"),
-    "ndps":        (83, "NDPS Act, 1985"),
-}
-
-STATUTE_ALIASES: List[Tuple[re.Pattern, str]] = [
-    (re.compile(r"\b(?:i\.?p\.?c\.?|indian penal code|penal code)\b", re.I), "ipc"),
-    (re.compile(r"\b(?:cr\.?p\.?c\.?|code of criminal procedure)\b", re.I), "crpc"),
-    (re.compile(r"\b(?:constitution|constitutional)\b", re.I), "constitution"),
-    (re.compile(r"\b(?:evidence act|indian evidence)\b", re.I), "evidence"),
-    (re.compile(r"\b(?:c\.?p\.?c\.?|code of civil procedure)\b", re.I), "cpc"),
-    (re.compile(r"\b(?:b\.?n\.?s\.?s\.?|nagarik suraksha)\b", re.I), "bnss"),
-    (re.compile(r"\b(?:b\.?n\.?s\.?|nyaya sanhita)\b", re.I), "bns"),
-    (re.compile(r"\b(?:b\.?s\.?a\.?|sakshya adhiniyam)\b", re.I), "bsa"),
-    (re.compile(r"\b(?:i\.?t\.? act|information technology act)\b", re.I), "it_act"),
-    (re.compile(r"\bhindu marriage act\b", re.I), "hma"),
-    (re.compile(r"\bindustrial disputes act\b", re.I), "ida"),
-    (re.compile(r"\b(?:contract act)\b", re.I), "contract"),
-    (re.compile(r"\b(?:n\.?i\.? act|negotiable instruments)\b", re.I), "ni_act"),
-    (re.compile(r"\bconsumer protection act\b", re.I), "cpa"),
-    (re.compile(r"\bpocso\b", re.I), "pocso"),
-    (re.compile(r"\bndps\b", re.I), "ndps"),
-]
+# Sourced from lawtune/acts.py so the graph extractor and this validator can never
+# disagree about what "the IPC" means or where it stops.
+STATUTE_LIMITS = LIMITS
 
 SECTION_RE = re.compile(
     r"\b(?P<kind>Section|Sec\.?|S\.|Article|Art\.?|अनुच्छेद|धारा|பிரிவு|విభాగం|ವಿಧಿ|അനുച്ഛേദം)"
@@ -126,11 +91,7 @@ def _statute_context(text: str, pos: int, window: int = 120) -> Optional[str]:
     """Which Act is the citation at `pos` talking about? Look right, then left."""
     right = text[pos: pos + window]
     left = text[max(0, pos - window): pos]
-    for scope in (right, left):
-        for pattern, key in STATUTE_ALIASES:
-            if pattern.search(scope):
-                return key
-    return None
+    return identify_act(right) or identify_act(left)
 
 
 def check_input(question: str) -> Verdict:

@@ -4,6 +4,7 @@
 #   bash run_all.sh           # hours; see README timings, and measure yours first
 #   SMOKE=1 bash run_all.sh   # ~25 min end-to-end sanity check
 #   CPT=1 bash run_all.sh     # also run the optional stage A (adds 2-4 h)
+#   RAG=0 bash run_all.sh     # skip the knowledge graph / retrieval build
 #
 # Everything is resumable. Ctrl-C and re-run the same command: the sampler and the
 # translator skip completed work, and the trainers checkpoint every 250 steps.
@@ -19,9 +20,11 @@ fi
 
 if [[ "${SMOKE:-0}" == "1" ]]; then
   TOTAL_MB=6; PAIRS=25; SFT_ITERS=60; CPT_ITERS=40; GUARD=30; EVAL_PER_LANG=4
+  KG_YEARS=2023; KG_PER_YEAR=25
   echo "### SMOKE MODE -- tiny run, proves the pipeline, produces a bad model ###"
 else
   TOTAL_MB=200; PAIRS=600; SFT_ITERS=6000; CPT_ITERS=3000; GUARD=250; EVAL_PER_LANG=40
+  KG_YEARS=2020-2025; KG_PER_YEAR=400
 fi
 
 step () { echo; echo "=============== $* ==============="; }
@@ -52,8 +55,27 @@ python scripts/05_train_sft.py --iters "${SFT_ITERS}"
 step "6/7  evaluate"
 python scripts/06_evaluate.py
 
-step "7/7  fuse for deployment"
+step "7/11  fuse for deployment"
 python scripts/07_export.py
 
-echo
-echo "Done. Try it:  python scripts/chat.py"
+if [[ "${RAG:-1}" == "1" ]]; then
+  step "8/11  fetch Supreme Court judgments (${KG_YEARS}) from AWS Open Data"
+  python scripts/08_fetch_judgments.py --years "${KG_YEARS}" --max-per-year "${KG_PER_YEAR}"
+
+  step "9/11  build the legal knowledge graph"
+  python scripts/09_build_graph.py
+
+  step "10/11 chunk, embed, build the FAISS index, link it into the graph"
+  python scripts/10_build_index.py
+
+  step "11/11 smoke-test retrieval"
+  python scripts/11_ask.py "What is anticipatory bail?" --retrieval-only
+
+  echo
+  echo "Done. Try it:"
+  echo "  python scripts/chat.py --rag        # grounded in retrieved judgments"
+  echo "  python scripts/11_ask.py --explore  # graph statistics"
+else
+  echo
+  echo "Done (RAG skipped). Try it:  python scripts/chat.py"
+fi
