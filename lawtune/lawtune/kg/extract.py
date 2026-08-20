@@ -51,16 +51,32 @@ CASE_NAME_RE = re.compile(
 _TRAILING_CONNECTOR = re.compile(r"\s+(?:of|the|and|for|&)$", re.I)
 
 # How the citing court treated the cited case. Checked in a window around the citation.
+#
+# Inflections are spelled out rather than written as `\bfollow\w+`. That form requires
+# at least one trailing character, so it matched "followed" but NOT the bare "we follow
+# X" -- and courts write the base form constantly ("we follow", "we distinguish", "we
+# affirm", "we refer to"). Five of these seven verbs had that defect, which silently
+# downgraded real treatment to a plain "cited" on the CITES edge, and in turn cost the
+# retriever its overruled/distinguished warnings.
 TREATMENTS: list[tuple[str, re.Pattern]] = [
-    ("overruled",     re.compile(r"\boverrul\w+|\bno longer good law\b", re.I)),
-    ("reversed",      re.compile(r"\breversed\b|\bset aside the judgment\b", re.I)),
-    ("distinguished", re.compile(r"\bdistinguish\w+|\bis not applicable\b|"
-                                 r"\bturns on its own facts\b", re.I)),
-    ("dissented",     re.compile(r"\bdissent\w+|\bwith respect, we are unable to agree\b", re.I)),
-    ("affirmed",      re.compile(r"\baffirm\w+|\bupheld\b", re.I)),
-    ("followed",      re.compile(r"\bfollow\w+|\brelied (?:up)?on\b|\breiterat\w+|"
-                                 r"\bapplied\b|\bapproved\b", re.I)),
-    ("referred",      re.compile(r"\brefer\w+ to\b|\bsee also\b|\bcf\.\b", re.I)),
+    ("overruled",     re.compile(r"\boverrul(?:e|es|ed|ing)\b|\bno longer good law\b",
+                                 re.I)),
+    ("reversed",      re.compile(r"\brevers(?:e|es|ed|ing)\b|"
+                                 r"\bset aside the judgment\b", re.I)),
+    ("distinguished", re.compile(r"\bdistinguish(?:es|ed|ing|able)?\b|"
+                                 r"\bis not applicable\b|\bturns on its own facts\b",
+                                 re.I)),
+    ("dissented",     re.compile(r"\bdissent(?:s|ed|ing)?\b|"
+                                 r"\bwith respect, we are unable to agree\b", re.I)),
+    ("affirmed",      re.compile(r"\baffirm(?:s|ed|ing)?\b|"
+                                 r"\buph(?:eld|olds?|olding)\b", re.I)),
+    ("followed",      re.compile(r"\bfollow(?:s|ed|ing)?\b|"
+                                 r"\brel(?:y|ies|ied) (?:up)?on\b|"
+                                 r"\breiterat(?:e|es|ed|ing)\b|"
+                                 r"\bapplied\b|\bapplying\b|"
+                                 r"\bapprov(?:e|es|ed|ing)\b", re.I)),
+    ("referred",      re.compile(r"\brefer(?:s|red|ring)?\s+to\b|\bsee also\b|\bcf\.\b",
+                                 re.I)),
 ]
 
 # NOTE: no global re.IGNORECASE here. With it, [A-Z] also matches lowercase, so
