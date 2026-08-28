@@ -8,3 +8,5 @@ outputs/
 !data/interim/.gitkeep
 !data/processed/.gitkeep
 kaggle.json
+.venv/
+venv/
