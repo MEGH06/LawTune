@@ -131,7 +131,14 @@ class Translator:
                            return_tensors="pt", max_length=256).to(self.device)
             gen = self.model.generate(
                 **enc, num_beams=self.beams, num_return_sequences=1,
-                max_length=256, min_length=0, use_cache=True,
+                # use_cache=False: IndicTrans2's remote modeling code predates the
+                # transformers Cache API rewrite. From ~4.5x, generate() passes a cache
+                # object instead of None on the first decode step, so its
+                # `past_key_values[0][0].shape[2] if past_key_values is not None` guard
+                # passes and then dereferences an empty entry -> AttributeError on every
+                # row. Disabling the cache avoids that path. Costs ~2.2 sent/s vs faster
+                # cached decoding, but it is correct.
+                max_length=256, min_length=0, use_cache=False,
             )
             dec = self.tok.batch_decode(gen, skip_special_tokens=True)
             post = self.ip.postprocess_batch(dec, lang=tgt)
@@ -213,7 +220,7 @@ def main() -> int:
                 try:
                     out = tr.translate(merged, flores, batch)
                 except Exception as exc:                       # noqa: BLE001
-                    print(f"    row {i} failed ({type(exc).__name__}); skipped")
+                    print(f"    row {i} failed ({type(exc).__name__}: {exc}); skipped")
                     dropped += 1
                     continue
 
