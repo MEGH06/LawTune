@@ -115,6 +115,24 @@ def save_adapters(model, out_dir: Path, adapter_config: dict) -> None:
         json.dumps(adapter_config, indent=2), encoding="utf-8")
 
 
+def load_adapters(model, out_dir: Path) -> bool:
+    """Reload adapters written by save_adapters. Returns True if weights were found.
+
+    Only the LoRA weights are restored, not the optimizer moments -- Adam rebuilds
+    those within a few steps, which is a far smaller loss than restarting at step 1.
+    """
+    mx, _, _ = require_mlx()
+    from mlx.utils import tree_unflatten
+
+    path = Path(out_dir) / "adapters.safetensors"
+    if not path.exists():
+        return False
+    weights = mx.load(str(path))
+    model.update(tree_unflatten(list(weights.items())))
+    mx.eval(model.parameters())
+    return True
+
+
 # ------------------------------------------------------------------ generation
 def make_sampler(temperature: float, top_p: float = 0.9):
     """Return whatever the installed mlx-lm wants for sampling, or None."""

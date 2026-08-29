@@ -63,6 +63,9 @@ def main() -> int:
     ap.add_argument("--lr", type=float, default=SFT["learning_rate"])
     ap.add_argument("--rank", type=int, default=SFT["rank"])
     ap.add_argument("--seq-len", type=int, default=SFT["seq_len"])
+    ap.add_argument("--resume", action="store_true",
+                    help="reload adapters.safetensors before training, so a crashed "
+                         "or interrupted run continues instead of restarting at step 1")
     ap.add_argument("--num-layers", type=int, default=None)
     ap.add_argument("--no-cpt", action="store_true")
     ap.add_argument("--max-examples", type=int, default=0)
@@ -99,6 +102,14 @@ def main() -> int:
                      num_layers=args.num_layers)
     # Stamp the base in, so inference reattaches this adapter to the right weights.
     cfg["base_model"] = base
+
+    if args.resume:
+        from lawtune.mlx_utils import load_adapters
+        if load_adapters(model, SFT_ADAPTER):
+            print(f"resumed adapter weights from {SFT_ADAPTER}")
+        else:
+            print(f"--resume given but no adapters.safetensors in {SFT_ADAPTER}; "
+                  "starting fresh")
 
     print("tokenising ...")
     examples = encode_split(tokenizer, train_ds, args.seq_len, args.max_examples)

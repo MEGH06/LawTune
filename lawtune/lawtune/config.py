@@ -124,6 +124,6 @@ SFT = dict(
     keys=["self_attn.q_proj", "self_attn.k_proj", "self_attn.v_proj", "self_attn.o_proj",
           "mlp.gate_proj", "mlp.up_proj", "mlp.down_proj"],
     learning_rate=1e-4, iters=6000, batch_size=1, grad_accum=8,
-    warmup=100, weight_decay=0.01, save_every=250, seq_len=1024,
+    warmup=100, weight_decay=0.01, save_every=50, seq_len=1024,
 )
 HF_TOKEN = os.environ.get("HF_TOKEN") or os.environ.get("HUGGING_FACE_HUB_TOKEN")
